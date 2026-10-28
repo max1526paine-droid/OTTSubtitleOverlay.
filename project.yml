@@ -1,0 +1,46 @@
+name: OTTSubtitleOverlay
+options:
+  bundleIdPrefix: com.irshad
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    TARGETED_DEVICE_FAMILY: "1,2"
+
+targets:
+  OTTSubtitleOverlay:
+    type: application
+    platform: iOS
+    sources:
+      - path: OTTSubtitleOverlay
+    info:
+      path: OTTSubtitleOverlay/Info.plist
+    entitlements:
+      path: OTTSubtitleOverlay/OTTSubtitleOverlay.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.irshad.ottsubtitleoverlay
+        INFOPLIST_FILE: OTTSubtitleOverlay/Info.plist
+        CODE_SIGN_ENTITLEMENTS: OTTSubtitleOverlay/OTTSubtitleOverlay.entitlements
+    dependencies:
+      - target: BroadcastExtension
+        embed: true
+
+  BroadcastExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: BroadcastExtension
+    info:
+      path: BroadcastExtension/Info.plist
+    entitlements:
+      path: BroadcastExtension/BroadcastExtension.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.irshad.ottsubtitleoverlay.BroadcastExtension
+        INFOPLIST_FILE: BroadcastExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: BroadcastExtension/BroadcastExtension.entitlements
+        SKIP_INSTALL: YES

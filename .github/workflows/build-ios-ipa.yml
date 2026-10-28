@@ -1,0 +1,44 @@
+name: Build iOS Subtitle Overlay IPA (macOS Cloud Runner)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode Project (.xcodeproj)
+        run: xcodegen generate
+
+      - name: Build Unsigned iOS App Archive (for AltStore / SideStore / Sideloadly)
+        run: |
+          xcodebuild clean build \
+            -project OTTSubtitleOverlay.xcodeproj \
+            -scheme OTTSubtitleOverlay \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package .ipa Bundle
+        run: |
+          mkdir -p build/Payload
+          cp -r build/DerivedData/Build/Products/Release-iphoneos/OTTSubtitleOverlay.app build/Payload/
+          cd build
+          zip -r SubFloat-OTTSubtitleOverlay.ipa Payload
+
+      - name: Upload .ipa Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SubFloat-OTTSubtitleOverlay-IPA
+          path: build/SubFloat-OTTSubtitleOverlay.ipa
