@@ -251,22 +251,22 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
     }
 
     private func drawSubtitleBanner(in rect: CGRect) {
-        // 1. Deep cinema backdrop
-        let bgAlpha = styleSettings.backgroundOpacity
-        UIColor(red: 0.05, green: 0.06, blue: 0.09, alpha: 1.0).setFill()
-        UIRectFill(rect)
+        // Clear background so Netflix video shows through
+        UIGraphicsGetCurrentContext()?.clear(rect)
 
-        let cardRect = rect.insetBy(dx: 16, dy: 12)
-        let cardPath = UIBezierPath(roundedRect: cardRect, cornerRadius: 20)
-        UIColor(red: 0.10, green: 0.12, blue: 0.18, alpha: bgAlpha).setFill()
+        let cardRect = rect.insetBy(dx: 12, dy: 8)
+        let cardPath = UIBezierPath(roundedRect: cardRect, cornerRadius: 18)
+        
+        // Translucent dark cinema pill (40% opacity) so the movie video is visible behind
+        UIColor(red: 0.04, green: 0.05, blue: 0.08, alpha: 0.40).setFill()
         cardPath.fill()
 
-        UIColor.white.withAlphaComponent(0.16).setStroke()
-        cardPath.lineWidth = 2.0
+        UIColor.white.withAlphaComponent(0.12).setStroke()
+        cardPath.lineWidth = 1.0
         cardPath.stroke()
 
-        var currentY: CGFloat = 24.0
-        let horizontalPadding: CGFloat = 38.0
+        var currentY: CGFloat = 18.0
+        let horizontalPadding: CGFloat = 24.0
         let availableWidth = rect.width - (horizontalPadding * 2)
 
         // 2. Optional Status Header Badge (Language + Active AI Provider + Sync Offset)

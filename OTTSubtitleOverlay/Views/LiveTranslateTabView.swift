@@ -215,23 +215,6 @@ struct LiveTranslateTabView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-
-                    DisclosureGroup("OpenSubtitles account (free, needed to download)") {
-                        VStack(spacing: 8) {
-                            TextField("API key (from opensubtitles.com/consumers)", text: $openSubtitles.apiKey)
-                                .textFieldStyle(.roundedBorder)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                            TextField("Username", text: $openSubtitles.username)
-                                .textFieldStyle(.roundedBorder)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                            SecureField("Password", text: $openSubtitles.password)
-                                .textFieldStyle(.roundedBorder)
-                        }
-                        .padding(.top, 6)
-                    }
-                    .font(.caption.weight(.semibold))
                 }
                 .padding()
                 .background(Color(.secondarySystemGroupedBackground))

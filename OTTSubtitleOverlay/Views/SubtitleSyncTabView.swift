@@ -157,12 +157,32 @@ struct SubtitleSyncTabView: View {
                         }
                     }
 
+                    if !openSubtitles.statusMessage.isEmpty {
+                        Text(openSubtitles.statusMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     ForEach(openSubtitles.searchResults) { item in
                         Button {
                             if let track = item.embeddedTrack {
                                 syncEngine.loadTrack(track)
                                 syncEngine.play()
                                 pipManager.startPiPIfNeeded()
+                            } else if item.downloadUrl != nil {
+                                Task {
+                                    if let downloaded = await openSubtitles.downloadSRT(from: item) {
+                                        let track = SubtitleTrack(
+                                            id: UUID(),
+                                            title: downloaded.title,
+                                            sourceLanguage: .korean,
+                                            cues: downloaded.cues
+                                        )
+                                        syncEngine.loadTrack(track)
+                                        syncEngine.play()
+                                        pipManager.startPiPIfNeeded()
+                                    }
+                                }
                             }
                         } label: {
                             HStack {
@@ -175,12 +195,19 @@ struct SubtitleSyncTabView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Text(item.language)
-                                    .font(.caption2.weight(.bold))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.accentColor.opacity(0.15))
-                                    .clipShape(Capsule())
+                                VStack(alignment: .trailing, spacing: 2) {
+                                    Text(item.language)
+                                        .font(.caption2.weight(.bold))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.accentColor.opacity(0.15))
+                                        .clipShape(Capsule())
+                                    if item.downloadCount > 0 {
+                                        Text("\(item.downloadCount) DLs")
+                                            .font(.system(size: 9))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
                             }
                             .padding(10)
                             .background(Color(.tertiarySystemGroupedBackground))

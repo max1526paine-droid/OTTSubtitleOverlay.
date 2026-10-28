@@ -103,7 +103,7 @@ final class SubtitleSyncEngine: ObservableObject {
         isFetchingOnline = true
         defer { isFetchingOnline = false }
 
-        guard let found = await OpenSubtitlesService.shared.fetchBestSRT(
+        guard let found = await OpenSubtitlesService.shared.autoScourAndDownload(
             query: query,
             season: season,
             episode: episode

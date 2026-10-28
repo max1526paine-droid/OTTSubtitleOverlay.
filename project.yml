@@ -10,6 +10,7 @@ settings:
     SWIFT_VERSION: "5.9"
     TARGETED_DEVICE_FAMILY: "1,2"
     GENERATE_INFOPLIST_FILE: NO
+    OTHER_LDFLAGS: "-lz"
 
 targets:
   OTTSubtitleOverlay:
