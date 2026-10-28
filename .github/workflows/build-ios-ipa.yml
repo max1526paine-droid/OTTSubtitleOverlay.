@@ -35,8 +35,10 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Package .ipa Bundle
+      - name: Verify Extension Info.plist and Package .ipa Bundle
         run: |
+          /usr/libexec/PlistBuddy -c "Print :NSExtension" build/DerivedData/Build/Products/Release-iphoneos/OTTSubtitleOverlay.app/PlugIns/BroadcastExtension.appex/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :UIBackgroundModes" build/DerivedData/Build/Products/Release-iphoneos/OTTSubtitleOverlay.app/Info.plist
           mkdir -p build/Payload
           cp -r build/DerivedData/Build/Products/Release-iphoneos/OTTSubtitleOverlay.app build/Payload/
           cd build

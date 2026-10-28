@@ -47,7 +47,9 @@ struct SystemBroadcastPickerRepresentable: UIViewRepresentable {
 
     func makeUIView(context: Context) -> RPSystemBroadcastPickerView {
         let picker = RPSystemBroadcastPickerView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
-        picker.preferredExtension = preferredExtensionBundleID
+        // Dynamically resolve the Sideloadly-signed extension bundle ID (e.g. com.irshad.ottsubtitleoverlay.<TEAM>.BroadcastExtension)
+        let hostBundleID = Bundle.main.bundleIdentifier ?? "com.irshad.ottsubtitleoverlay"
+        picker.preferredExtension = "\(hostBundleID).BroadcastExtension"
         picker.showsMicrophoneButton = true
         return picker
     }

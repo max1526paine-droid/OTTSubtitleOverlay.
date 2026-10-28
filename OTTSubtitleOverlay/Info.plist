@@ -28,6 +28,13 @@
 		<string>disneyplus</string>
 		<string>viki</string>
 	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>SubFloat needs microphone access to listen to Korean, Japanese, and foreign OTT dialogue and translate it into English subtitles in real time.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
@@ -38,7 +45,7 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
-	<key> UILaunchScreen</key>
+	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>

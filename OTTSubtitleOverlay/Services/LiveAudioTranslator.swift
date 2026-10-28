@@ -1,5 +1,6 @@
 import AVFoundation
 import Combine
+import Network
 import Speech
 import UIKit
 
@@ -37,9 +38,11 @@ final class LiveAudioTranslator: ObservableObject {
     private var lastAppGroupTimestamp: Double = 0
 
     private let geminiLiveSocket = GeminiLiveWebSocketClient()
+    private var localBridgeListener: NWListener?
 
     init() {
         setupAppGroupObserver()
+        setupLocalBroadcastBridgeServer()
         setupGeminiLiveCallbacks()
     }
 
@@ -313,7 +316,46 @@ final class LiveAudioTranslator: ObservableObject {
         }
     }
 
-    // MARK: - ReplayKit Broadcast Extension Shared App Group Listener
+    // MARK: - ReplayKit Broadcast Extension Loopback Bridge (127.0.0.1:49876) + App Group Listener
+
+    private func setupLocalBroadcastBridgeServer() {
+        guard let port = NWEndpoint.Port(rawValue: 49876),
+              let listener = try? NWListener(using: .tcp, on: port) else { return }
+
+        listener.newConnectionHandler = { [weak self] connection in
+            connection.start(queue: .global(qos: .userInitiated))
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, _, _ in
+                if let data, let rawRequest = String(data: data, encoding: .utf8) {
+                    let firstLine = rawRequest.components(separatedBy: "\r\n").first ?? ""
+                    let parts = firstLine.components(separatedBy: " ")
+                    if parts.count >= 2,
+                       let comps = URLComponents(string: "http://127.0.0.1" + parts[1]) {
+                        let activeVal = comps.queryItems?.first(where: { $0.name == "active" })?.value
+                        let textVal = comps.queryItems?.first(where: { $0.name == "text" })?.value ?? ""
+                        Task { @MainActor [weak self] in
+                            guard let self else { return }
+                            if let activeVal {
+                                self.isBroadcastActive = (activeVal == "1")
+                            }
+                            if !textVal.isEmpty {
+                                self.handleRecognizedSourceSpeech(textVal, isFinal: true)
+                            }
+                        }
+                    }
+                }
+                Task { @MainActor [weak self] in
+                    let lang = self?.sourceLanguage.rawValue ?? "ko-KR"
+                    let body = "{\"lang\":\"\(lang)\"}"
+                    let resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                    connection.send(content: resp.data(using: .utf8), completion: .contentProcessed { _ in
+                        connection.cancel()
+                    })
+                }
+            }
+        }
+        listener.start(queue: .global(qos: .userInitiated))
+        self.localBridgeListener = listener
+    }
 
     private func setupAppGroupObserver() {
         let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
