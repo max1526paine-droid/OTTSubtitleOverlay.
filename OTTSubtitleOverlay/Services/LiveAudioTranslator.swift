@@ -206,11 +206,14 @@ final class LiveAudioTranslator: ObservableObject {
         guard !trimmed.isEmpty else { return }
 
         liveOriginalText = trimmed
-        PiPSubtitleManager.shared.updateSubtitle(
-            original: trimmed,
-            english: liveTranslatedText.isEmpty ? "Translating..." : liveTranslatedText,
-            badge: "\(sourceLanguage.flagEmoji) \(sourceLanguage.shortCode) → EN • \(TranslationService.shared.activeProvider.shortBadge)"
-        )
+        let srtOverride = SubtitleSyncEngine.shared.srtOverrideActive
+        if !srtOverride {
+            PiPSubtitleManager.shared.updateSubtitle(
+                original: trimmed,
+                english: liveTranslatedText.isEmpty ? "Translating..." : liveTranslatedText,
+                badge: "\(sourceLanguage.flagEmoji) \(sourceLanguage.shortCode) → EN • \(TranslationService.shared.activeProvider.shortBadge)"
+            )
+        }
 
         guard trimmed != lastTranslatedSourceSnippet else { return }
 
@@ -230,6 +233,13 @@ final class LiveAudioTranslator: ObservableObject {
 
             guard !Task.isCancelled else { return }
             self.liveTranslatedText = result.translatedText
+
+            // When real SRT subtitles are active, use the live translation only to keep the SRT clock in sync
+            if SubtitleSyncEngine.shared.srtOverrideActive {
+                SubtitleSyncEngine.shared.autoAlign(withEnglishLine: result.translatedText)
+                return
+            }
+
             let badge = "\(self.sourceLanguage.flagEmoji) \(self.sourceLanguage.shortCode) → EN • \(result.provider.shortBadge)"
             PiPSubtitleManager.shared.updateSubtitle(
                 original: trimmed,

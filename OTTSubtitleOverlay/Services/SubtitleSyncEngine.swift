@@ -14,6 +14,10 @@ final class SubtitleSyncEngine: ObservableObject {
     @Published var activeCue: SubtitleCue?
     @Published var isTranslatingTrack: Bool = false
     @Published var translationProgress: Double = 0.0
+    @Published var isFetchingOnline: Bool = false
+    @Published var onlineStatus: String = ""
+    /// True while a downloaded real `.srt` drives the PiP bar instead of live AI translation.
+    @Published var srtOverrideActive: Bool = false
 
     private var playbackTimer: Timer?
     private var lastTickDate: Date?
@@ -88,6 +92,90 @@ final class SubtitleSyncEngine: ObservableObject {
             translationProgress = Double(index + 1) / Double(total)
             updateActiveCueForCurrentTime()
         }
+    }
+
+    // MARK: - Online SRT Fallback (search + download real subtitles for the show)
+
+    /// Searches OpenSubtitles, downloads the real `.srt` for the show, loads it and starts the PiP overlay.
+    /// While active, live AI translations are only used to keep the subtitle clock aligned with the show.
+    func findAndPlaySRT(query: String, season: String, episode: String, sourceLanguage: SourceLanguage) async {
+        guard !isFetchingOnline else { return }
+        isFetchingOnline = true
+        defer { isFetchingOnline = false }
+
+        guard let found = await OpenSubtitlesService.shared.fetchBestSRT(
+            query: query,
+            season: season,
+            episode: episode
+        ) else {
+            onlineStatus = OpenSubtitlesService.shared.statusMessage
+            return
+        }
+
+        let isEnglish = found.languageCode.lowercased().hasPrefix("en")
+        let track = SubtitleTrack(
+            id: UUID(),
+            title: found.title,
+            sourceLanguage: sourceLanguage,
+            cues: found.cues
+        )
+        loadTrack(track)
+        srtOverrideActive = true
+        play()
+        PiPSubtitleManager.shared.startPiPIfNeeded()
+
+        if isEnglish {
+            onlineStatus = "Playing real English subtitles for \"\(found.title)\" (\(found.cues.count) lines). Say a line or tap the sync buttons to align."
+        } else {
+            onlineStatus = "No English file found. Translating \(found.languageCode.uppercased()) subtitles to English..."
+            await translateLoadedTrackToEnglish()
+            onlineStatus = "Playing translated subtitles for \"\(found.title)\"."
+        }
+    }
+
+    /// Stops the SRT override so live AI translation drives the PiP bar again.
+    func stopSRTOverride() {
+        srtOverrideActive = false
+        pause()
+        onlineStatus = "Back to live AI translation."
+    }
+
+    /// Aligns the subtitle clock by fuzzy-matching a live English line (translated from the audio)
+    /// against the downloaded SRT cues.
+    func autoAlign(withEnglishLine line: String) {
+        guard srtOverrideActive else { return }
+        let target = Self.wordTokens(line)
+        guard target.count >= 3 else { return }
+
+        let effectiveNow = max(0, currentTime + syncOffsetSeconds)
+        var bestIndex: Int?
+        var bestScore: Double = 0
+
+        for (index, cue) in currentTrack.cues.enumerated() {
+            let cueTokens = Self.wordTokens(cue.translatedText)
+            guard !cueTokens.isEmpty else { continue }
+            let overlap = Double(target.intersection(cueTokens).count) / Double(min(target.count, cueTokens.count))
+            // Prefer cues closest to the current clock when scores tie
+            let proximityPenalty = min(abs(cue.startTime - effectiveNow) / 100_000.0, 0.05)
+            let score = overlap - proximityPenalty
+            if score > bestScore {
+                bestScore = score
+                bestIndex = index
+            }
+        }
+
+        guard let bestIndex, bestScore >= 0.6 else { return }
+        let cue = currentTrack.cues[bestIndex]
+        currentTime = max(0, cue.startTime + 0.5 - syncOffsetSeconds)
+        if isPlaying {
+            lastTickDate = Date()
+        }
+        updateActiveCueForCurrentTime()
+    }
+
+    private static func wordTokens(_ text: String) -> Set<String> {
+        let parts = text.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+        return Set(parts.filter { $0.count > 2 })
     }
 
     // MARK: - Playback Controls

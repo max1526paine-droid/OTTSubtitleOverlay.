@@ -4,6 +4,12 @@ struct LiveTranslateTabView: View {
     @ObservedObject var liveTranslator = LiveAudioTranslator.shared
     @ObservedObject var translationService = TranslationService.shared
     @ObservedObject var pipManager = PiPSubtitleManager.shared
+    @ObservedObject var syncEngine = SubtitleSyncEngine.shared
+    @ObservedObject var openSubtitles = OpenSubtitlesService.shared
+
+    @State private var srtQuery: String = ""
+    @State private var srtSeason: String = ""
+    @State private var srtEpisode: String = ""
 
     var body: some View {
         ScrollView {
@@ -116,6 +122,116 @@ struct LiveTranslateTabView: View {
                             .foregroundStyle(.secondary)
                         Spacer()
                     }
+                }
+                .padding()
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+
+                // 2b. Wrong translation? Download the real .srt for the show and play it
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Wrong translation? Use real subtitles (SRT)", systemImage: "captions.bubble.fill")
+                        .font(.subheadline.weight(.semibold))
+
+                    Text("Type the show name you are watching. The app downloads its real English .srt from OpenSubtitles and plays it in the PiP bar. Live audio keeps the timing aligned.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        TextField("Show / movie name", text: $srtQuery)
+                            .textFieldStyle(.roundedBorder)
+                        TextField("S", text: $srtSeason)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 44)
+                            .keyboardType(.numberPad)
+                        TextField("E", text: $srtEpisode)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 44)
+                            .keyboardType(.numberPad)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button {
+                            Task {
+                                await syncEngine.findAndPlaySRT(
+                                    query: srtQuery,
+                                    season: srtSeason,
+                                    episode: srtEpisode,
+                                    sourceLanguage: liveTranslator.sourceLanguage
+                                )
+                            }
+                        } label: {
+                            HStack {
+                                if syncEngine.isFetchingOnline {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "arrow.down.circle.fill")
+                                }
+                                Text(syncEngine.isFetchingOnline ? "Finding subtitles..." : "Find & Play SRT")
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color.accentColor)
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                        }
+                        .disabled(syncEngine.isFetchingOnline)
+
+                        if syncEngine.srtOverrideActive {
+                            Button {
+                                syncEngine.stopSRTOverride()
+                            } label: {
+                                Text("Back to Live AI")
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.vertical, 10)
+                                    .padding(.horizontal, 12)
+                                    .background(Color(.tertiarySystemFill))
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    if syncEngine.srtOverrideActive {
+                        HStack(spacing: 8) {
+                            ForEach([-2.0, -0.5, 0.5, 2.0], id: \.self) { delta in
+                                Button {
+                                    syncEngine.adjustSyncOffset(by: delta)
+                                } label: {
+                                    Text(String(format: "%+.1fs", delta))
+                                        .font(.caption.weight(.semibold))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 8)
+                                        .background(Color(.tertiarySystemFill))
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    if !syncEngine.onlineStatus.isEmpty {
+                        Text(syncEngine.onlineStatus)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    DisclosureGroup("OpenSubtitles account (free, needed to download)") {
+                        VStack(spacing: 8) {
+                            TextField("API key (from opensubtitles.com/consumers)", text: $openSubtitles.apiKey)
+                                .textFieldStyle(.roundedBorder)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            TextField("Username", text: $openSubtitles.username)
+                                .textFieldStyle(.roundedBorder)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            SecureField("Password", text: $openSubtitles.password)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        .padding(.top, 6)
+                    }
+                    .font(.caption.weight(.semibold))
                 }
                 .padding()
                 .background(Color(.secondarySystemGroupedBackground))
