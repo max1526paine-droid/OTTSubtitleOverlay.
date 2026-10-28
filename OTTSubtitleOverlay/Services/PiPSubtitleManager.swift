@@ -33,7 +33,7 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
     var isPlaybackPaused: Bool = false
 
     private let frameWidth: Int = 1280
-    private let frameHeight: Int = 260
+    private let frameHeight: Int = 170
 
     override init() {
         super.init()

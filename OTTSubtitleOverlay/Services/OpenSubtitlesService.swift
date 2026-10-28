@@ -89,7 +89,10 @@ final class OpenSubtitlesService: ObservableObject {
                 let movieName = (item["MovieName"] as? String) ?? query
                 let movieYear = (item["MovieYear"] as? String) ?? ""
                 let release = (item["MovieReleaseName"] as? String) ?? movieName
-                let dlLink = (item["SubDownloadLink"] as? String) ?? ""
+                var dlLink = (item["SubDownloadLink"] as? String) ?? ""
+                if dlLink.hasPrefix("http://") {
+                    dlLink = dlLink.replacingOccurrences(of: "http://", with: "https://")
+                }
                 let lang = (item["LanguageName"] as? String) ?? "English"
                 let dlCount = Int((item["SubDownloadsCnt"] as? String) ?? "0") ?? 0
 
@@ -114,10 +117,11 @@ final class OpenSubtitlesService: ObservableObject {
 
     /// Downloads and parses the real .srt file from a search result item.
     func downloadSRT(from result: OpenSubtitleSearchResult) async -> DownloadedSRT? {
-        guard let dlUrlString = result.downloadUrl,
-              let url = URL(string: dlUrlString) else {
-            return nil
+        guard var dlUrlString = result.downloadUrl else { return nil }
+        if dlUrlString.hasPrefix("http://") {
+            dlUrlString = dlUrlString.replacingOccurrences(of: "http://", with: "https://")
         }
+        guard let url = URL(string: dlUrlString) else { return nil }
 
         isDownloading = true
         statusMessage = "Downloading subtitles for \(result.title)..."
