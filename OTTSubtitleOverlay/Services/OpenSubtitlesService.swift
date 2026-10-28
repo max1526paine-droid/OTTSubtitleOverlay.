@@ -15,6 +15,7 @@ struct OpenSubtitleSearchResult: Identifiable {
 final class OpenSubtitlesService: ObservableObject {
     static let shared = OpenSubtitlesService()
 
+    @Published var apiKey: String = ""
     @Published var isSearching: Bool = false
     @Published var isDownloading: Bool = false
     @Published var searchResults: [OpenSubtitleSearchResult] = []
