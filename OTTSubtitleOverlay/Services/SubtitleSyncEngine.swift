@@ -23,9 +23,14 @@ final class SubtitleSyncEngine: ObservableObject {
     private var lastTickDate: Date?
 
     init() {
-        let initialTrack = OpenSubtitlesService.builtInTracks().first!
-        self.currentTrack = initialTrack
-        self.activeCue = initialTrack.cues.first
+        let emptyTrack = SubtitleTrack(
+            id: UUID(),
+            title: "No Subtitle Loaded",
+            sourceLanguage: .korean,
+            cues: []
+        )
+        self.currentTrack = emptyTrack
+        self.activeCue = nil
 
         // Connect PiP transport controls (Play/Pause & +10/-10 skip buttons inside PiP overlay)
         PiPSubtitleManager.shared.onPlayPauseToggled = { [weak self] shouldPlay in
@@ -235,6 +240,14 @@ final class SubtitleSyncEngine: ObservableObject {
     }
 
     func updateActiveCueForCurrentTime() {
+        guard !currentTrack.cues.isEmpty else {
+            PiPSubtitleManager.shared.updateSubtitle(
+                original: nil,
+                english: "Search any movie or show to begin subtitles",
+                badge: "SubFloat OTT • Ready"
+            )
+            return
+        }
         let effectiveTime = max(0, currentTime + syncOffsetSeconds)
         let matched = currentTrack.cues.first { cue in
             effectiveTime >= cue.startTime && effectiveTime <= cue.endTime
@@ -242,7 +255,7 @@ final class SubtitleSyncEngine: ObservableObject {
 
         activeCue = matched
         let offsetStr = String(format: "%+.2fs", syncOffsetSeconds)
-        let badge = "\(currentTrack.sourceLanguage.flagEmoji) \(currentTrack.sourceLanguage.shortCode) → EN • \(SRTParser.formatTime(effectiveTime)) (Sync \(offsetStr))"
+        let badge = "\(currentTrack.title) • \(SRTParser.formatTime(effectiveTime)) (\(offsetStr))"
 
         if let matched {
             PiPSubtitleManager.shared.updateSubtitle(

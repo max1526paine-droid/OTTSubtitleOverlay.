@@ -18,9 +18,9 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
 
     @Published var isPiPActive: Bool = false
     @Published var isPiPPossible: Bool = false
-    @Published var currentOriginalLine: String? = "기훈 씨, 이제 선택할 시간입니다."
-    @Published var currentEnglishLine: String = "Gi-hun, it is time to make your choice now."
-    @Published var statusBadgeText: String = "🇰🇷 KO → EN • Ready"
+    @Published var currentOriginalLine: String? = nil
+    @Published var currentEnglishLine: String = "Search any show or movie to begin subtitles"
+    @Published var statusBadgeText: String = "SubFloat OTT • Ready"
     @Published var styleSettings = SubtitleStyleSettings() {
         didSet {
             renderCurrentFrame()
