@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var searchQuery: String = ""
     @State private var seasonNumber: String = ""
     @State private var episodeNumber: String = ""
+    @State private var downloadingItemId: String? = nil
     @State private var detectedClipboardTitle: String? = nil
     @State private var showingFileImporter: Bool = false
 
@@ -245,17 +246,22 @@ struct ContentView: View {
                                             .lineLimit(1)
                                     }
                                     Spacer()
-                                    VStack(alignment: .trailing, spacing: 2) {
-                                        Text(item.language)
-                                            .font(.caption2.weight(.bold))
-                                            .padding(.horizontal, 8)
-                                            .padding(.vertical, 4)
-                                            .background(Color.blue.opacity(0.15))
-                                            .clipShape(Capsule())
-                                        if item.downloadCount > 0 {
-                                            Text("\(item.downloadCount) DLs")
-                                                .font(.system(size: 9))
-                                                .foregroundStyle(.secondary)
+                                    if downloadingItemId == item.id {
+                                        ProgressView().controlSize(.small)
+                                            .padding(.horizontal, 10)
+                                    } else {
+                                        VStack(alignment: .trailing, spacing: 2) {
+                                            Text(item.language)
+                                                .font(.caption2.weight(.bold))
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 4)
+                                                .background(Color.blue.opacity(0.15))
+                                                .clipShape(Capsule())
+                                            if item.downloadCount > 0 {
+                                                Text("\(item.downloadCount) DLs")
+                                                    .font(.system(size: 9))
+                                                    .foregroundStyle(.secondary)
+                                            }
                                         }
                                     }
                                 }
@@ -264,6 +270,7 @@ struct ContentView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
                             .buttonStyle(.plain)
+                            .disabled(downloadingItemId != nil)
                         }
                     }
                     .padding()
@@ -311,7 +318,9 @@ struct ContentView: View {
             syncEngine.play()
             pipManager.startPiPIfNeeded()
         } else if item.downloadUrl != nil {
+            downloadingItemId = item.id
             Task {
+                defer { downloadingItemId = nil }
                 if let downloaded = await openSubtitles.downloadSRT(from: item) {
                     let track = SubtitleTrack(
                         id: UUID(),
