@@ -19,8 +19,8 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
     @Published var isPiPActive: Bool = false
     @Published var isPiPPossible: Bool = false
     @Published var currentOriginalLine: String? = nil
-    @Published var currentEnglishLine: String = "Search any show or movie to begin subtitles"
-    @Published var statusBadgeText: String = "SubFloat OTT • Ready"
+    @Published var currentEnglishLine: String = "Search your show & episode below to load English subtitles"
+    @Published var statusBadgeText: String = "SubFloat OTT v3.0 • Ready"
     @Published var styleSettings = SubtitleStyleSettings() {
         didSet {
             renderCurrentFrame()
@@ -417,9 +417,9 @@ extension PiPSubtitleManager: AVPictureInPictureControllerDelegate, AVPictureInP
     ) {
         let seconds = CMTimeGetSeconds(skipInterval)
         Task { @MainActor in
-            // Tapping +10s / -10s inside the floating PiP window nudges subtitle sync by +0.5s / -0.5s!
-            let nudge: TimeInterval = seconds >= 0 ? 0.5 : -0.5
-            self.onSkipRequested?(nudge)
+            // Tapping +10s / -10s inside the floating PiP window over Netflix jumps to Next / Previous dialogue line!
+            let direction: TimeInterval = seconds >= 0 ? 1.0 : -1.0
+            self.onSkipRequested?(direction)
             completionHandler()
         }
     }

@@ -10,18 +10,35 @@ struct ContentView: View {
     @State private var searchQuery: String = ""
     @State private var seasonNumber: String = ""
     @State private var episodeNumber: String = ""
+    @State private var scriptFilterText: String = ""
     @State private var downloadingItemId: String? = nil
     @State private var detectedClipboardTitle: String? = nil
     @State private var showingFileImporter: Bool = false
+
+    private var filteredCues: [SubtitleCue] {
+        let all = syncEngine.currentTrack.cues
+        let q = scriptFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else {
+            // Show window around active cue or first 80 cues for smooth scrolling
+            if let active = syncEngine.activeCue,
+               let idx = all.firstIndex(where: { $0.id == active.id }) {
+                let start = max(0, idx - 5)
+                let end = min(all.count, start + 60)
+                return Array(all[start..<end])
+            }
+            return Array(all.prefix(60))
+        }
+        return all.filter { $0.translatedText.localizedCaseInsensitiveContains(q) }
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
-                    // 1. Live PiP Subtitle Preview + Float Button
+                    // 1. Live PiP Subtitle Preview + Float Button + Quick OTT Launchers
                     VStack(spacing: 10) {
                         PiPVideoContainerView(displayLayer: pipManager.displayLayer)
-                            .frame(height: 78)
+                            .frame(height: 82)
                             .clipShape(RoundedRectangle(cornerRadius: 14))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 14)
@@ -45,7 +62,6 @@ struct ContentView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                             }
 
-                            // Quick OTT Launchers
                             Button {
                                 launchApp(scheme: "nflx://", fallback: "https://www.netflix.com")
                             } label: {
@@ -85,7 +101,7 @@ struct ContentView: View {
                     if let detected = detectedClipboardTitle, !detected.isEmpty {
                         HStack {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text("Detected from Netflix")
+                                Text("Detected from Clipboard")
                                     .font(.caption2.weight(.bold))
                                     .foregroundStyle(.blue)
                                 Text("\"\(detected)\"")
@@ -93,11 +109,9 @@ struct ContentView: View {
                                     .lineLimit(1)
                             }
                             Spacer()
-                            Button("Load Subtitles") {
+                            Button("Find & Play") {
                                 searchQuery = detected
-                                Task {
-                                    await openSubtitles.searchSubtitles(query: detected)
-                                }
+                                triggerSearch(autoPlayTopResult: true)
                             }
                             .font(.caption.weight(.bold))
                             .padding(.horizontal, 12)
@@ -111,15 +125,16 @@ struct ContentView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
 
-                    // 3. Active Playback & Sync Timing Controls
+                    // 3. Active Episode Subtitle Player + Interactive Script List
                     if !syncEngine.currentTrack.cues.isEmpty {
-                        VStack(alignment: .leading, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(syncEngine.currentTrack.title)
                                         .font(.subheadline.weight(.bold))
+                                        .foregroundStyle(.green)
                                         .lineLimit(1)
-                                    Text("\(syncEngine.currentTrack.cues.count) dialogue lines • Duration: \(SRTParser.formatTime(syncEngine.currentTrack.totalDuration))")
+                                    Text("\(syncEngine.currentTrack.cues.count) real English lines loaded • Total: \(SRTParser.formatTime(syncEngine.currentTrack.totalDuration))")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
@@ -130,10 +145,70 @@ struct ContentView: View {
                                         pipManager.startPiPIfNeeded()
                                     }
                                 } label: {
-                                    Image(systemName: syncEngine.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                        .font(.title)
-                                        .foregroundStyle(Color.blue)
+                                    HStack(spacing: 4) {
+                                        Image(systemName: syncEngine.isPlaying ? "pause.fill" : "play.fill")
+                                        Text(syncEngine.isPlaying ? "Pause" : "Play")
+                                            .font(.caption.weight(.bold))
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(Color.blue)
+                                    .foregroundStyle(.white)
+                                    .clipShape(Capsule())
                                 }
+                            }
+
+                            // Quick Line Jump Buttons (Prev Line / Next Line / First Dialogue / 00:00)
+                            HStack(spacing: 8) {
+                                Button {
+                                    syncEngine.skipToPreviousCue()
+                                } label: {
+                                    Label("Prev Line", systemImage: "backward.end.fill")
+                                        .font(.caption.weight(.bold))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 9)
+                                        .background(Color.blue.opacity(0.18))
+                                        .foregroundStyle(.blue)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    syncEngine.skipToNextCue()
+                                } label: {
+                                    Label("Next Line", systemImage: "forward.end.fill")
+                                        .font(.caption.weight(.bold))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 9)
+                                        .background(Color.blue.opacity(0.18))
+                                        .foregroundStyle(.blue)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    syncEngine.jumpToFirstDialogue()
+                                } label: {
+                                    Text("1st Line")
+                                        .font(.caption.weight(.bold))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 9)
+                                        .background(Color(.tertiarySystemFill))
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    syncEngine.jumpToStartOfEpisode()
+                                } label: {
+                                    Text("00:00")
+                                        .font(.caption.weight(.bold))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 9)
+                                        .background(Color(.tertiarySystemFill))
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                                }
+                                .buttonStyle(.plain)
                             }
 
                             // Timeline Scrubber
@@ -148,31 +223,63 @@ struct ContentView: View {
                             HStack {
                                 Text(SRTParser.formatTime(syncEngine.currentTime))
                                 Spacer()
-                                Text(String(format: "Sync Offset: %+.2fs", syncEngine.syncOffsetSeconds))
-                                    .fontWeight(.bold)
-                                    .foregroundStyle(syncEngine.syncOffsetSeconds == 0 ? .secondary : Color.blue)
+                                Text("Tip: Tap ↺10 / ↻10 inside PiP over Netflix to jump lines!")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(.blue)
                                 Spacer()
                                 Text(SRTParser.formatTime(syncEngine.currentTrack.totalDuration))
                             }
                             .font(.caption2)
                             .foregroundStyle(.secondary)
 
-                            // Precision Sync Nudge Buttons
-                            HStack(spacing: 8) {
-                                ForEach([-1.0, -0.25, 0.25, 1.0], id: \.self) { delta in
-                                    Button {
-                                        syncEngine.adjustSyncOffset(by: delta)
-                                    } label: {
-                                        Text(String(format: "%+.2fs", delta))
-                                            .font(.caption.weight(.bold))
-                                            .frame(maxWidth: .infinity)
-                                            .padding(.vertical, 8)
-                                            .background(Color(.tertiarySystemFill))
+                            // Interactive Episode Script List (Tap Any Line You Hear on Netflix to Sync Instantly!)
+                            Divider()
+
+                            Text("Episode Dialogue Script (Tap any line you hear on Netflix to sync)")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.secondary)
+
+                            TextField("Search spoken words in this episode (e.g. Ms. Choi)...", text: $scriptFilterText)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.caption)
+
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 6) {
+                                    ForEach(filteredCues) { cue in
+                                        let isCurrent = (syncEngine.activeCue?.id == cue.id)
+                                        Button {
+                                            syncEngine.jumpToCue(cue)
+                                            pipManager.startPiPIfNeeded()
+                                        } label: {
+                                            HStack(alignment: .top, spacing: 8) {
+                                                Text(SRTParser.formatTime(cue.startTime))
+                                                    .font(.caption2.monospacedDigit().weight(.bold))
+                                                    .foregroundStyle(isCurrent ? .yellow : .secondary)
+                                                    .frame(width: 44, alignment: .leading)
+
+                                                Text(cue.translatedText)
+                                                    .font(.caption.weight(isCurrent ? .bold : .regular))
+                                                    .foregroundStyle(isCurrent ? .yellow : .primary)
+                                                    .multilineTextAlignment(.leading)
+
+                                                Spacer()
+
+                                                if isCurrent {
+                                                    Image(systemName: "speaker.wave.2.fill")
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.yellow)
+                                                }
+                                            }
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 7)
+                                            .background(isCurrent ? Color.blue.opacity(0.28) : Color(.tertiarySystemGroupedBackground))
                                             .clipShape(RoundedRectangle(cornerRadius: 8))
+                                        }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
                                 }
                             }
+                            .frame(maxHeight: 210)
                         }
                         .padding()
                         .background(Color(.secondarySystemGroupedBackground))
@@ -194,34 +301,40 @@ struct ContentView: View {
                         }
 
                         HStack(spacing: 8) {
-                            TextField("Enter show title (e.g. Teach You a Lesson)...", text: $searchQuery)
+                            TextField("Show name (e.g. Teach you a lesson ep 6)...", text: $searchQuery)
                                 .textFieldStyle(.roundedBorder)
                                 .onSubmit {
-                                    triggerSearch()
+                                    triggerSearch(autoPlayTopResult: true)
                                 }
                             TextField("S", text: $seasonNumber)
                                 .textFieldStyle(.roundedBorder)
-                                .frame(width: 42)
+                                .frame(width: 38)
                                 .keyboardType(.numberPad)
                             TextField("E", text: $episodeNumber)
                                 .textFieldStyle(.roundedBorder)
-                                .frame(width: 42)
+                                .frame(width: 38)
                                 .keyboardType(.numberPad)
-
-                            Button {
-                                triggerSearch()
-                            } label: {
-                                if openSubtitles.isSearching {
-                                    ProgressView().controlSize(.small)
-                                        .frame(width: 32, height: 32)
-                                } else {
-                                    Image(systemName: "arrow.right.circle.fill")
-                                        .font(.title2)
-                                        .foregroundStyle(Color.blue)
-                                }
-                            }
-                            .disabled(openSubtitles.isSearching)
                         }
+
+                        Button {
+                            triggerSearch(autoPlayTopResult: true)
+                        } label: {
+                            HStack(spacing: 8) {
+                                if openSubtitles.isSearching || openSubtitles.isDownloading {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "play.fill")
+                                }
+                                Text(openSubtitles.isSearching ? "Searching..." : (openSubtitles.isDownloading ? "Downloading Episode SRT..." : "Find & Play English Subtitles"))
+                                    .font(.subheadline.weight(.bold))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color.blue)
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                        .disabled(openSubtitles.isSearching || openSubtitles.isDownloading)
 
                         if !openSubtitles.statusMessage.isEmpty {
                             Text(openSubtitles.statusMessage)
@@ -237,7 +350,7 @@ struct ContentView: View {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 3) {
                                         Text(item.title)
-                                            .font(.subheadline.weight(.semibold))
+                                            .font(.subheadline.weight(.bold))
                                             .foregroundStyle(.primary)
                                             .lineLimit(1)
                                         Text(item.releaseName)
@@ -251,11 +364,12 @@ struct ContentView: View {
                                             .padding(.horizontal, 10)
                                     } else {
                                         VStack(alignment: .trailing, spacing: 2) {
-                                            Text(item.language)
+                                            Text("Play SRT")
                                                 .font(.caption2.weight(.bold))
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 4)
-                                                .background(Color.blue.opacity(0.15))
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 5)
+                                                .background(Color.blue)
+                                                .foregroundStyle(.white)
                                                 .clipShape(Capsule())
                                             if item.downloadCount > 0 {
                                                 Text("\(item.downloadCount) DLs")
@@ -281,7 +395,7 @@ struct ContentView: View {
                 .padding(.bottom, 24)
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("SubFloat OTT")
+            .navigationTitle("SubFloat OTT v3.0")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
                 checkClipboardForNetflixTitle()
@@ -304,17 +418,21 @@ struct ContentView: View {
         }
     }
 
-    private func triggerSearch() {
+    private func triggerSearch(autoPlayTopResult: Bool = true) {
         let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         Task {
             await openSubtitles.searchSubtitles(query: q, season: seasonNumber, episode: episodeNumber)
+            if autoPlayTopResult, let first = openSubtitles.searchResults.first {
+                selectResult(first)
+            }
         }
     }
 
     private func selectResult(_ item: OpenSubtitleSearchResult) {
         if let track = item.embeddedTrack {
-            syncEngine.loadTrack(track)
+            syncEngine.loadTrack(track, startAtFirstDialogue: true)
             syncEngine.play()
             pipManager.startPiPIfNeeded()
         } else if item.downloadUrl != nil {
@@ -328,7 +446,7 @@ struct ContentView: View {
                         sourceLanguage: .korean,
                         cues: downloaded.cues
                     )
-                    syncEngine.loadTrack(track)
+                    syncEngine.loadTrack(track, startAtFirstDialogue: true)
                     syncEngine.play()
                     pipManager.startPiPIfNeeded()
                 }
@@ -339,8 +457,7 @@ struct ContentView: View {
     private func checkClipboardForNetflixTitle() {
         guard let clip = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
               !clip.isEmpty else { return }
-        
-        // 1. Netflix Share Format: "Watch Teach You a Lesson | Netflix https://..."
+
         if let watchRange = clip.range(of: "Watch ", options: .caseInsensitive),
            let pipeRange = clip.range(of: "|", range: watchRange.upperBound..<clip.endIndex) {
             let extracted = String(clip[watchRange.upperBound..<pipeRange.lowerBound]).trimmingCharacters(in: .whitespaces)
@@ -349,7 +466,6 @@ struct ContentView: View {
                 return
             }
         }
-        // 2. Short title pasted into clipboard
         if clip.count >= 3 && clip.count <= 45 && !clip.hasPrefix("http") {
             self.detectedClipboardTitle = clip
         }

@@ -12,12 +12,8 @@ final class SubtitleSyncEngine: ObservableObject {
     @Published var currentTime: TimeInterval = 0.0
     @Published var syncOffsetSeconds: TimeInterval = 0.0
     @Published var activeCue: SubtitleCue?
-    @Published var isTranslatingTrack: Bool = false
-    @Published var translationProgress: Double = 0.0
     @Published var isFetchingOnline: Bool = false
     @Published var onlineStatus: String = ""
-    /// True while a downloaded real `.srt` drives the PiP bar instead of live AI translation.
-    @Published var srtOverrideActive: Bool = false
 
     private var playbackTimer: Timer?
     private var lastTickDate: Date?
@@ -44,18 +40,30 @@ final class SubtitleSyncEngine: ObservableObject {
             }
         }
 
-        PiPSubtitleManager.shared.onSkipRequested = { [weak self] nudge in
+        // Tapping +10 / -10 inside the floating PiP overlay over Netflix jumps to the Next / Previous dialogue line!
+        PiPSubtitleManager.shared.onSkipRequested = { [weak self] direction in
             Task { @MainActor in
-                self?.adjustSyncOffset(by: nudge)
+                guard let self else { return }
+                if direction >= 0 {
+                    self.skipToNextCue()
+                } else {
+                    self.skipToPreviousCue()
+                }
             }
         }
     }
 
-    func loadTrack(_ track: SubtitleTrack) {
+    func loadTrack(_ track: SubtitleTrack, startAtFirstDialogue: Bool = true) {
         pause()
         currentTrack = track
-        currentTime = 0
         syncOffsetSeconds = 0
+
+        if startAtFirstDialogue, !track.cues.isEmpty {
+            let firstIdx = SRTParser.firstSpokenDialogueIndex(in: track.cues)
+            currentTime = max(0, track.cues[firstIdx].startTime)
+        } else {
+            currentTime = 0
+        }
         updateActiveCueForCurrentTime()
     }
 
@@ -68,119 +76,63 @@ final class SubtitleSyncEngine: ObservableObject {
             sourceLanguage: sourceLanguage,
             cues: cues
         )
-        loadTrack(track)
+        loadTrack(track, startAtFirstDialogue: true)
     }
 
-    /// Translates all cues in a foreign `.srt` file (e.g. Korean or Japanese) into English
-    /// using the resilient failover chain: ChatGPT -> Gemini 3.8 -> Free Fallback.
-    func translateLoadedTrackToEnglish() async {
-        guard !isTranslatingTrack else { return }
-        isTranslatingTrack = true
-        translationProgress = 0.0
-        defer { isTranslatingTrack = false }
+    // MARK: - Line-by-Line Jump Controls (Sync to Netflix in 1 Tap)
 
-        let total = max(1, currentTrack.cues.count)
-        for index in currentTrack.cues.indices {
-            let cue = currentTrack.cues[index]
-            let sourceLine = cue.originalText ?? cue.translatedText
-            let prevContext = index > 0 ? currentTrack.cues[index - 1].translatedText : nil
-
-            let result = await TranslationService.shared.translateToEnglish(
-                text: sourceLine,
-                sourceLanguage: currentTrack.sourceLanguage,
-                recentContext: prevContext
-            )
-
-            currentTrack.cues[index].originalText = sourceLine
-            currentTrack.cues[index].translatedText = result.translatedText
-            currentTrack.cues[index].providerUsed = result.provider.shortBadge
-            translationProgress = Double(index + 1) / Double(total)
-            updateActiveCueForCurrentTime()
-        }
-    }
-
-    // MARK: - Online SRT Fallback (search + download real subtitles for the show)
-
-    /// Searches OpenSubtitles, downloads the real `.srt` for the show, loads it and starts the PiP overlay.
-    /// While active, live AI translations are only used to keep the subtitle clock aligned with the show.
-    func findAndPlaySRT(query: String, season: String, episode: String, sourceLanguage: SourceLanguage) async {
-        guard !isFetchingOnline else { return }
-        isFetchingOnline = true
-        defer { isFetchingOnline = false }
-
-        guard let found = await OpenSubtitlesService.shared.autoScourAndDownload(
-            query: query,
-            season: season,
-            episode: episode
-        ) else {
-            onlineStatus = OpenSubtitlesService.shared.statusMessage
-            return
-        }
-
-        let isEnglish = found.languageCode.lowercased().hasPrefix("en")
-        let track = SubtitleTrack(
-            id: UUID(),
-            title: found.title,
-            sourceLanguage: sourceLanguage,
-            cues: found.cues
-        )
-        loadTrack(track)
-        srtOverrideActive = true
-        play()
-        PiPSubtitleManager.shared.startPiPIfNeeded()
-
-        if isEnglish {
-            onlineStatus = "Playing real English subtitles for \"\(found.title)\" (\(found.cues.count) lines). Say a line or tap the sync buttons to align."
+    func jumpToCue(_ cue: SubtitleCue) {
+        syncOffsetSeconds = 0
+        currentTime = max(0, cue.startTime + 0.05)
+        if isPlaying {
+            lastTickDate = Date()
         } else {
-            onlineStatus = "No English file found. Translating \(found.languageCode.uppercased()) subtitles to English..."
-            await translateLoadedTrackToEnglish()
-            onlineStatus = "Playing translated subtitles for \"\(found.title)\"."
+            play()
         }
+        updateActiveCueForCurrentTime()
     }
 
-    /// Stops the SRT override so live AI translation drives the PiP bar again.
-    func stopSRTOverride() {
-        srtOverrideActive = false
-        pause()
-        onlineStatus = "Back to live AI translation."
-    }
-
-    /// Aligns the subtitle clock by fuzzy-matching a live English line (translated from the audio)
-    /// against the downloaded SRT cues.
-    func autoAlign(withEnglishLine line: String) {
-        guard srtOverrideActive else { return }
-        let target = Self.wordTokens(line)
-        guard target.count >= 3 else { return }
-
-        let effectiveNow = max(0, currentTime + syncOffsetSeconds)
-        var bestIndex: Int?
-        var bestScore: Double = 0
-
-        for (index, cue) in currentTrack.cues.enumerated() {
-            let cueTokens = Self.wordTokens(cue.translatedText)
-            guard !cueTokens.isEmpty else { continue }
-            let overlap = Double(target.intersection(cueTokens).count) / Double(min(target.count, cueTokens.count))
-            // Prefer cues closest to the current clock when scores tie
-            let proximityPenalty = min(abs(cue.startTime - effectiveNow) / 100_000.0, 0.05)
-            let score = overlap - proximityPenalty
-            if score > bestScore {
-                bestScore = score
-                bestIndex = index
-            }
-        }
-
-        guard let bestIndex, bestScore >= 0.6 else { return }
-        let cue = currentTrack.cues[bestIndex]
-        currentTime = max(0, cue.startTime + 0.5 - syncOffsetSeconds)
+    func jumpToStartOfEpisode() {
+        syncOffsetSeconds = 0
+        currentTime = 0
         if isPlaying {
             lastTickDate = Date()
         }
         updateActiveCueForCurrentTime()
     }
 
-    private static func wordTokens(_ text: String) -> Set<String> {
-        let parts = text.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
-        return Set(parts.filter { $0.count > 2 })
+    func jumpToFirstDialogue() {
+        guard !currentTrack.cues.isEmpty else { return }
+        let idx = SRTParser.firstSpokenDialogueIndex(in: currentTrack.cues)
+        jumpToCue(currentTrack.cues[idx])
+    }
+
+    func skipToNextCue() {
+        guard !currentTrack.cues.isEmpty else { return }
+        let effectiveNow = max(0, currentTime + syncOffsetSeconds)
+        if let nextCue = currentTrack.cues.first(where: { $0.startTime > effectiveNow + 0.15 }) {
+            currentTime = max(0, nextCue.startTime + 0.05 - syncOffsetSeconds)
+        } else if let first = currentTrack.cues.first {
+            currentTime = max(0, first.startTime + 0.05 - syncOffsetSeconds)
+        }
+        if isPlaying {
+            lastTickDate = Date()
+        }
+        updateActiveCueForCurrentTime()
+    }
+
+    func skipToPreviousCue() {
+        guard !currentTrack.cues.isEmpty else { return }
+        let effectiveNow = max(0, currentTime + syncOffsetSeconds)
+        if let prevCue = currentTrack.cues.last(where: { $0.startTime < effectiveNow - 1.2 }) {
+            currentTime = max(0, prevCue.startTime + 0.05 - syncOffsetSeconds)
+        } else if let first = currentTrack.cues.first {
+            currentTime = max(0, first.startTime + 0.05 - syncOffsetSeconds)
+        }
+        if isPlaying {
+            lastTickDate = Date()
+        }
+        updateActiveCueForCurrentTime()
     }
 
     // MARK: - Playback Controls
@@ -217,6 +169,9 @@ final class SubtitleSyncEngine: ObservableObject {
 
     func seek(to time: TimeInterval) {
         currentTime = max(0, min(time, max(currentTrack.totalDuration, 1)))
+        if isPlaying {
+            lastTickDate = Date()
+        }
         updateActiveCueForCurrentTime()
     }
 
@@ -233,8 +188,7 @@ final class SubtitleSyncEngine: ObservableObject {
 
         currentTime += delta
         if currentTime > currentTrack.totalDuration + 2.0 {
-            // Loop demo track smoothly so user can test PiP continuously
-            currentTime = 0
+            pause()
         }
         updateActiveCueForCurrentTime()
     }
@@ -243,32 +197,58 @@ final class SubtitleSyncEngine: ObservableObject {
         guard !currentTrack.cues.isEmpty else {
             PiPSubtitleManager.shared.updateSubtitle(
                 original: nil,
-                english: "Search any movie or show to begin subtitles",
-                badge: "SubFloat OTT • Ready"
+                english: "Search your show & episode below to load English subtitles",
+                badge: "SubFloat OTT v3.0 • Ready"
             )
             return
         }
+
         let effectiveTime = max(0, currentTime + syncOffsetSeconds)
-        let matched = currentTrack.cues.first { cue in
-            effectiveTime >= cue.startTime && effectiveTime <= cue.endTime
-        }
 
-        activeCue = matched
-        let offsetStr = String(format: "%+.2fs", syncOffsetSeconds)
-        let badge = "\(currentTrack.title) • \(SRTParser.formatTime(effectiveTime)) (\(offsetStr))"
-
-        if let matched {
+        // 1. Direct hit within a cue's [startTime, endTime]
+        if let matched = currentTrack.cues.first(where: { effectiveTime >= $0.startTime && effectiveTime <= $0.endTime }) {
+            activeCue = matched
+            let badge = "\(currentTrack.title) • \(SRTParser.formatTime(effectiveTime)) [Line \(matched.index)/\(currentTrack.cues.count)]"
             PiPSubtitleManager.shared.updateSubtitle(
                 original: matched.originalText,
                 english: matched.translatedText,
                 badge: badge
             )
-        } else {
+            return
+        }
+
+        // 2. Hold the just-spoken cue for up to 1.8s so fast dialogue is easy to read
+        if let recent = currentTrack.cues.last(where: { $0.endTime < effectiveTime && (effectiveTime - $0.endTime) <= 1.8 }) {
+            activeCue = recent
+            let badge = "\(currentTrack.title) • \(SRTParser.formatTime(effectiveTime)) [Line \(recent.index)/\(currentTrack.cues.count)]"
             PiPSubtitleManager.shared.updateSubtitle(
-                original: nil,
-                english: "…",
+                original: recent.originalText,
+                english: recent.translatedText,
                 badge: badge
             )
+            return
         }
+
+        // 3. During longer silent gaps, preview the NEXT upcoming line with its timestamp
+        // so the PiP window never looks blank or frozen!
+        if let upcoming = currentTrack.cues.first(where: { $0.startTime > effectiveTime }) {
+            activeCue = upcoming
+            let waitSecs = max(1, Int(ceil(upcoming.startTime - effectiveTime)))
+            let badge = "\(currentTrack.title) • \(SRTParser.formatTime(effectiveTime)) (Next in \(waitSecs)s)"
+            PiPSubtitleManager.shared.updateSubtitle(
+                original: nil,
+                english: "[\(SRTParser.formatTime(upcoming.startTime))] \(upcoming.translatedText)",
+                badge: badge
+            )
+            return
+        }
+
+        // 4. End of track
+        activeCue = nil
+        PiPSubtitleManager.shared.updateSubtitle(
+            original: nil,
+            english: "End of episode subtitles.",
+            badge: "\(currentTrack.title) • \(SRTParser.formatTime(effectiveTime))"
+        )
     }
 }

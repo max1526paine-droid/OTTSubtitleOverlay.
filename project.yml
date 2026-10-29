@@ -23,18 +23,3 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.irshad.ottsubtitleoverlay
         INFOPLIST_FILE: OTTSubtitleOverlay/Info.plist
         GENERATE_INFOPLIST_FILE: NO
-    dependencies:
-      - target: BroadcastExtension
-        embed: true
-
-  BroadcastExtension:
-    type: app-extension
-    platform: iOS
-    sources:
-      - path: BroadcastExtension
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.irshad.ottsubtitleoverlay.BroadcastExtension
-        INFOPLIST_FILE: BroadcastExtension/Info.plist
-        GENERATE_INFOPLIST_FILE: NO
-        SKIP_INSTALL: YES
