@@ -1,10 +1,9 @@
 import AVFoundation
-import ReplayKit
 import SwiftUI
 import UIKit
 
 /// Hosts the `AVSampleBufferDisplayLayer` required by `AVPictureInPictureController`
-/// so the user can preview the exact subtitle banner and launch floating PiP over Netflix / Prime Video.
+/// so the user can preview the subtitle banner and float it over Netflix / Prime Video.
 struct PiPVideoContainerView: UIViewRepresentable {
     let displayLayer: AVSampleBufferDisplayLayer
 
@@ -38,21 +37,4 @@ final class SampleBufferHostView: UIView {
         attachedLayer?.frame = bounds
         CATransaction.commit()
     }
-}
-
-/// Wraps Apple's `RPSystemBroadcastPickerView` so the user can start capturing system audio
-/// from OTT apps via the bundled ReplayKit Broadcast Upload Extension.
-struct SystemBroadcastPickerRepresentable: UIViewRepresentable {
-    let preferredExtensionBundleID: String
-
-    func makeUIView(context: Context) -> RPSystemBroadcastPickerView {
-        let picker = RPSystemBroadcastPickerView(frame: CGRect(x: 0, y: 0, width: 44, height: 44))
-        // Dynamically resolve the Sideloadly-signed extension bundle ID (e.g. com.irshad.ottsubtitleoverlay.<TEAM>.BroadcastExtension)
-        let hostBundleID = Bundle.main.bundleIdentifier ?? "com.irshad.ottsubtitleoverlay"
-        picker.preferredExtension = "\(hostBundleID).BroadcastExtension"
-        picker.showsMicrophoneButton = true
-        return picker
-    }
-
-    func updateUIView(_ uiView: RPSystemBroadcastPickerView, context: Context) {}
 }

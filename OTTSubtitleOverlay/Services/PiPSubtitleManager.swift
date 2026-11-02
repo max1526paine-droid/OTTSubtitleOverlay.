@@ -4,9 +4,8 @@ import CoreMedia
 import CoreVideo
 import UIKit
 
-/// Renders real-time English subtitles into a wide `AVSampleBufferDisplayLayer` video stream
-/// and presents it inside an iOS Picture-in-Picture (PiP) floating overlay window that stays
-/// on top of Netflix, Amazon Prime Video, Crunchyroll, Disney+, and other OTT apps.
+/// Renders English subtitles into a slim, floating Picture-in-Picture (PiP) window
+/// that stays on top of Netflix, Amazon Prime Video, Disney+, and other apps.
 @MainActor
 final class PiPSubtitleManager: NSObject, ObservableObject {
     static let shared = PiPSubtitleManager()
@@ -18,66 +17,43 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
 
     @Published var isPiPActive: Bool = false
     @Published var isPiPPossible: Bool = false
-    @Published var currentOriginalLine: String? = nil
-    @Published var currentEnglishLine: String = "Search your show & episode below to load English subtitles"
-    @Published var statusBadgeText: String = "SubFloat OTT v3.0 • Ready"
-    @Published var styleSettings = SubtitleStyleSettings() {
-        didSet {
-            renderCurrentFrame()
-        }
-    }
+    @Published var currentText: String = "Search any show or movie to begin subtitles"
+    @Published var statusBadgeText: String = "SubFloat • Ready"
 
-    /// Callback triggered when the user taps Play/Pause or Skip buttons inside the floating PiP overlay.
     var onPlayPauseToggled: ((Bool) -> Void)?
-    var onSkipRequested: ((TimeInterval) -> Void)?
-    var isPlaybackPaused: Bool = false
+    var onSkipRequested: ((Double) -> Void)?
 
     private let frameWidth: Int = 1280
     private let frameHeight: Int = 170
 
     override init() {
         super.init()
-        configureAudioSessionForOTTCoexistence()
+        configureAudioSession()
         setupDisplayLayer()
-        observeLifecycleNotifications()
+        observeLifecycle()
     }
 
-    // MARK: - Audio Session Coexistence (Never Pause Netflix / Prime Video)
+    // MARK: - Audio Session (Never pause or mute Netflix / Prime Video)
 
-    func configureAudioSessionForOTTCoexistence(enableMicCapture: Bool = false) {
+    private func configureAudioSession() {
         let session = AVAudioSession.sharedInstance()
         do {
-            if enableMicCapture {
-                try session.setCategory(
-                    .playAndRecord,
-                    mode: .measurement,
-                    options: [.mixWithOthers, .defaultToSpeaker, .allowBluetoothA2DP, .allowAirPlay]
-                )
-            } else {
-                // .mixWithOthers is CRITICAL so Netflix & Amazon Prime audio/video keep playing
-                try session.setCategory(
-                    .playback,
-                    mode: .default,
-                    options: [.mixWithOthers]
-                )
-            }
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true, options: [])
         } catch {
-            print("[PiPSubtitleManager] AudioSession configuration warning: \(error.localizedDescription)")
+            print("[PiP] AudioSession error: \(error.localizedDescription)")
         }
     }
 
-    // MARK: - Display Layer & PiP Controller Setup
+    // MARK: - Setup PiP Controller
 
     private func setupDisplayLayer() {
         displayLayer.videoGravity = .resizeAspect
         displayLayer.backgroundColor = UIColor.black.cgColor
 
-        // Enqueue initial frame immediately so AVPictureInPictureController recognizes valid video dimensions
         renderCurrentFrame()
 
         guard AVPictureInPictureController.isPictureInPictureSupported() else {
-            print("[PiPSubtitleManager] Picture-in-Picture is not supported on this device.")
             return
         }
 
@@ -94,13 +70,11 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
         self.pipController = controller
         self.isPiPPossible = true
 
-        startFrameHeartbeat()
+        startHeartbeat()
     }
 
-    private func startFrameHeartbeat() {
+    private func startHeartbeat() {
         refreshTimer?.invalidate()
-        // Keep feeding CMSampleBuffers at 2 fps in .common RunLoop mode so PiP stays alive
-        // even when scrolling, switching to Netflix/Prime, or when the device locks.
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.renderCurrentFrame()
@@ -110,16 +84,14 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
         self.refreshTimer = timer
     }
 
-    // MARK: - Background & Lock Screen Persistence
-
-    private func observeLifecycleNotifications() {
+    private func observeLifecycle() {
         NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.beginExtendedBackgroundExecution()
+                self?.beginBackgroundTask()
                 self?.renderCurrentFrame()
             }
         }
@@ -130,25 +102,24 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.endExtendedBackgroundExecution()
+                self?.endBackgroundTask()
                 self?.renderCurrentFrame()
             }
         }
     }
 
-    private func beginExtendedBackgroundExecution() {
-        guard styleSettings.keepActiveWhenLockedOrBackgrounded else { return }
+    private func beginBackgroundTask() {
         UIApplication.shared.isIdleTimerDisabled = true
         if backgroundTaskID == .invalid {
-            backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "OTTSubtitleOverlayPiP") { [weak self] in
+            backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "SubFloatPiP") { [weak self] in
                 Task { @MainActor in
-                    self?.endExtendedBackgroundExecution()
+                    self?.endBackgroundTask()
                 }
             }
         }
     }
 
-    private func endExtendedBackgroundExecution() {
+    private func endBackgroundTask() {
         if backgroundTaskID != .invalid {
             UIApplication.shared.endBackgroundTask(backgroundTaskID)
             backgroundTaskID = .invalid
@@ -173,29 +144,28 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
         pipController.startPictureInPicture()
     }
 
-    func updateSubtitle(original: String?, english: String, badge: String? = nil) {
-        self.currentOriginalLine = original
-        self.currentEnglishLine = english
+    func updateSubtitle(text: String, badge: String? = nil) {
+        self.currentText = text
         if let badge {
             self.statusBadgeText = badge
         }
         renderCurrentFrame()
     }
 
-    // MARK: - CoreGraphics -> CVPixelBuffer -> CMSampleBuffer Rendering
+    // MARK: - Frame Rendering (CoreGraphics -> CVPixelBuffer -> CMSampleBuffer)
 
     func renderCurrentFrame() {
         if displayLayer.status == .failed {
             displayLayer.flush()
         }
 
-        guard let pixelBuffer = createSubtitlePixelBuffer() else { return }
+        guard let pixelBuffer = createPixelBuffer() else { return }
         guard let sampleBuffer = createSampleBuffer(from: pixelBuffer) else { return }
 
         displayLayer.enqueue(sampleBuffer)
     }
 
-    private func createSubtitlePixelBuffer() -> CVPixelBuffer? {
+    private func createPixelBuffer() -> CVPixelBuffer? {
         var pixelBuffer: CVPixelBuffer?
         let attrs: [CFString: Any] = [
             kCVPixelBufferCGImageCompatibilityKey: true,
@@ -212,16 +182,12 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
             &pixelBuffer
         )
 
-        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
-            return nil
-        }
+        guard status == kCVReturnSuccess, let buffer = pixelBuffer else { return nil }
 
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
 
-        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
-            return nil
-        }
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return nil }
 
         let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -235,11 +201,8 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
             bytesPerRow: bytesPerRow,
             space: colorSpace,
             bitmapInfo: bitmapInfo
-        ) else {
-            return nil
-        }
+        ) else { return nil }
 
-        // Flip coordinate system so UIKit/NSString drawing renders top-down naturally
         context.translateBy(x: 0, y: CGFloat(frameHeight))
         context.scaleBy(x: 1.0, y: -1.0)
 
@@ -251,13 +214,12 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
     }
 
     private func drawSubtitleBanner(in rect: CGRect) {
-        // Clear background so Netflix video shows through
         UIGraphicsGetCurrentContext()?.clear(rect)
 
         let cardRect = rect.insetBy(dx: 12, dy: 8)
         let cardPath = UIBezierPath(roundedRect: cardRect, cornerRadius: 18)
-        
-        // Translucent dark cinema pill (40% opacity) so the movie video is visible behind
+
+        // Translucent dark cinema pill backdrop (40% opacity)
         UIColor(red: 0.04, green: 0.05, blue: 0.08, alpha: 0.40).setFill()
         cardPath.fill()
 
@@ -265,69 +227,40 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
         cardPath.lineWidth = 1.0
         cardPath.stroke()
 
-        var currentY: CGFloat = 18.0
         let horizontalPadding: CGFloat = 24.0
         let availableWidth = rect.width - (horizontalPadding * 2)
 
-        // 2. Optional Status Header Badge (Language + Active AI Provider + Sync Offset)
-        if styleSettings.showStatusHeaderInPiP {
-            let badgeParagraph = NSMutableParagraphStyle()
-            badgeParagraph.alignment = .center
+        // Status Header Badge
+        let badgeParagraph = NSMutableParagraphStyle()
+        badgeParagraph.alignment = .center
 
-            let badgeAttrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 20, weight: .semibold),
-                .foregroundColor: UIColor(red: 0.68, green: 0.78, blue: 0.98, alpha: 0.95),
-                .paragraphStyle: badgeParagraph
-            ]
-            let badgeRect = CGRect(x: horizontalPadding, y: currentY, width: availableWidth, height: 28)
-            (statusBadgeText as NSString).draw(in: badgeRect, withAttributes: badgeAttrs)
-            currentY += 32.0
-        } else {
-            currentY += 12.0
-        }
+        let badgeAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 20, weight: .semibold),
+            .foregroundColor: UIColor(red: 0.70, green: 0.82, blue: 1.0, alpha: 0.95),
+            .paragraphStyle: badgeParagraph
+        ]
+        let badgeRect = CGRect(x: horizontalPadding, y: 16.0, width: availableWidth, height: 26)
+        (statusBadgeText as NSString).draw(in: badgeRect, withAttributes: badgeAttrs)
 
-        // 3. Optional Original Foreign Dialogue Line (Korean / Japanese / etc.)
-        if styleSettings.showOriginalLanguageLine,
-           let orig = currentOriginalLine,
-           !orig.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let origParagraph = NSMutableParagraphStyle()
-            origParagraph.alignment = .center
-            origParagraph.lineBreakMode = .byTruncatingTail
-
-            let origAttrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: max(22, styleSettings.fontSize * 0.72), weight: .medium),
-                .foregroundColor: UIColor.white.withAlphaComponent(0.75),
-                .paragraphStyle: origParagraph
-            ]
-            let origRect = CGRect(x: horizontalPadding, y: currentY, width: availableWidth, height: 36)
-            (orig as NSString).draw(in: origRect, withAttributes: origAttrs)
-            currentY += 40.0
-        } else {
-            currentY += 14.0
-        }
-
-        // 4. Primary Translated English Subtitle Line (Bold Cinema Typography with Shadow)
-        let engParagraph = NSMutableParagraphStyle()
-        engParagraph.alignment = .center
-        engParagraph.lineBreakMode = .byWordWrapping
+        // Primary English Subtitle Line (Cinema Yellow Typography)
+        let textParagraph = NSMutableParagraphStyle()
+        textParagraph.alignment = .center
+        textParagraph.lineBreakMode = .byWordWrapping
 
         let shadow = NSShadow()
         shadow.shadowColor = UIColor.black.withAlphaComponent(0.95)
         shadow.shadowOffset = CGSize(width: 0, height: 2)
         shadow.shadowBlurRadius = 4.0
 
-        let engFontSize = styleSettings.fontSize * 1.45
-        let engAttrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: engFontSize, weight: .bold),
-            .foregroundColor: styleSettings.textColor.uiColor,
-            .paragraphStyle: engParagraph,
+        let textAttrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: 42, weight: .bold),
+            .foregroundColor: UIColor(red: 1.0, green: 0.92, blue: 0.23, alpha: 1.0),
+            .paragraphStyle: textParagraph,
             .shadow: shadow
         ]
 
-        let remainingHeight = max(60, rect.height - currentY - 18)
-        let engRect = CGRect(x: horizontalPadding, y: currentY, width: availableWidth, height: remainingHeight)
-        let displayEnglish = currentEnglishLine.isEmpty ? "Listening for dialogue..." : currentEnglishLine
-        (displayEnglish as NSString).draw(in: engRect, withAttributes: engAttrs)
+        let textRect = CGRect(x: horizontalPadding, y: 48.0, width: availableWidth, height: 110)
+        (currentText as NSString).draw(in: textRect, withAttributes: textAttrs)
     }
 
     private func createSampleBuffer(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
@@ -337,9 +270,7 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
             imageBuffer: pixelBuffer,
             formatDescriptionOut: &formatDescription
         )
-        guard formatStatus == noErr, let formatDesc = formatDescription else {
-            return nil
-        }
+        guard formatStatus == noErr, let formatDesc = formatDescription else { return nil }
 
         let now = CMClockGetTime(CMClockGetHostTimeClock())
         var timingInfo = CMSampleTimingInfo(
@@ -362,7 +293,7 @@ final class PiPSubtitleManager: NSObject, ObservableObject {
     }
 }
 
-// MARK: - AVPictureInPictureControllerDelegate & SampleBufferPlaybackDelegate
+// MARK: - AVPictureInPictureControllerDelegate & Playback Controls
 
 extension PiPSubtitleManager: AVPictureInPictureControllerDelegate, AVPictureInPictureSampleBufferPlaybackDelegate {
     nonisolated func pictureInPictureControllerDidStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
@@ -383,7 +314,6 @@ extension PiPSubtitleManager: AVPictureInPictureControllerDelegate, AVPictureInP
         setPlaying playing: Bool
     ) {
         Task { @MainActor in
-            self.isPlaybackPaused = !playing
             self.onPlayPauseToggled?(playing)
             pictureInPictureController.invalidatePlaybackState()
         }
@@ -417,9 +347,8 @@ extension PiPSubtitleManager: AVPictureInPictureControllerDelegate, AVPictureInP
     ) {
         let seconds = CMTimeGetSeconds(skipInterval)
         Task { @MainActor in
-            // Tapping +10s / -10s inside the floating PiP window over Netflix jumps to Next / Previous dialogue line!
-            let direction: TimeInterval = seconds >= 0 ? 1.0 : -1.0
-            self.onSkipRequested?(direction)
+            // Tapping +10s / -10s inside PiP jumps to Next / Previous dialogue line!
+            self.onSkipRequested?(seconds)
             completionHandler()
         }
     }

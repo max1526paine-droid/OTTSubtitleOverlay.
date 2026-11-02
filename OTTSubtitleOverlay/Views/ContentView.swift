@@ -15,27 +15,26 @@ struct ContentView: View {
     @State private var detectedClipboardTitle: String? = nil
     @State private var showingFileImporter: Bool = false
 
-    private var filteredCues: [SubtitleCue] {
+    private var scriptCues: [SubtitleCue] {
         let all = syncEngine.currentTrack.cues
         let q = scriptFilterText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else {
-            // Show window around active cue or first 80 cues for smooth scrolling
             if let active = syncEngine.activeCue,
                let idx = all.firstIndex(where: { $0.id == active.id }) {
                 let start = max(0, idx - 5)
-                let end = min(all.count, start + 60)
+                let end = min(all.count, start + 70)
                 return Array(all[start..<end])
             }
-            return Array(all.prefix(60))
+            return Array(all.prefix(70))
         }
-        return all.filter { $0.translatedText.localizedCaseInsensitiveContains(q) }
+        return all.filter { $0.text.localizedCaseInsensitiveContains(q) }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
-                    // 1. Live PiP Subtitle Preview + Float Button + Quick OTT Launchers
+                    // 1. Live PiP Preview + Float Button + Quick OTT Launchers
                     VStack(spacing: 10) {
                         PiPVideoContainerView(displayLayer: pipManager.displayLayer)
                             .frame(height: 82)
@@ -97,7 +96,7 @@ struct ContentView: View {
                     .background(Color(.secondarySystemGroupedBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 16))
 
-                    // 2. Clipboard Auto-Detect Card (If user shared or copied from Netflix)
+                    // 2. Clipboard Auto-Detect Card (If user copied a title or link from Netflix)
                     if let detected = detectedClipboardTitle, !detected.isEmpty {
                         HStack {
                             VStack(alignment: .leading, spacing: 3) {
@@ -125,7 +124,7 @@ struct ContentView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
 
-                    // 3. Active Episode Subtitle Player + Interactive Script List
+                    // 3. Active Subtitle Player & Interactive Script List (when subtitle is loaded)
                     if !syncEngine.currentTrack.cues.isEmpty {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -134,7 +133,7 @@ struct ContentView: View {
                                         .font(.subheadline.weight(.bold))
                                         .foregroundStyle(.green)
                                         .lineLimit(1)
-                                    Text("\(syncEngine.currentTrack.cues.count) real English lines loaded • Total: \(SRTParser.formatTime(syncEngine.currentTrack.totalDuration))")
+                                    Text("\(syncEngine.currentTrack.cues.count) English lines • Total: \(SRTParser.formatTime(syncEngine.currentTrack.totalDuration))")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
@@ -158,7 +157,7 @@ struct ContentView: View {
                                 }
                             }
 
-                            // Quick Line Jump Buttons (Prev Line / Next Line / First Dialogue / 00:00)
+                            // Quick Dialogue Jump Buttons
                             HStack(spacing: 8) {
                                 Button {
                                     syncEngine.skipToPreviousCue()
@@ -199,7 +198,7 @@ struct ContentView: View {
                                 .buttonStyle(.plain)
 
                                 Button {
-                                    syncEngine.jumpToStartOfEpisode()
+                                    syncEngine.jumpToStart()
                                 } label: {
                                     Text("00:00")
                                         .font(.caption.weight(.bold))
@@ -223,29 +222,46 @@ struct ContentView: View {
                             HStack {
                                 Text(SRTParser.formatTime(syncEngine.currentTime))
                                 Spacer()
-                                Text("Tip: Tap ↺10 / ↻10 inside PiP over Netflix to jump lines!")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(.blue)
+                                Text(String(format: "Offset: %+.2fs", syncEngine.syncOffsetSeconds))
+                                    .fontWeight(.bold)
+                                    .foregroundStyle(syncEngine.syncOffsetSeconds == 0 ? .secondary : Color.blue)
                                 Spacer()
                                 Text(SRTParser.formatTime(syncEngine.currentTrack.totalDuration))
                             }
                             .font(.caption2)
                             .foregroundStyle(.secondary)
 
-                            // Interactive Episode Script List (Tap Any Line You Hear on Netflix to Sync Instantly!)
+                            // Precision Nudge Buttons
+                            HStack(spacing: 8) {
+                                ForEach([-1.0, -0.25, 0.25, 1.0], id: \.self) { delta in
+                                    Button {
+                                        syncEngine.adjustSyncOffset(by: delta)
+                                    } label: {
+                                        Text(String(format: "%+.2fs", delta))
+                                            .font(.caption.weight(.bold))
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 7)
+                                            .background(Color(.tertiarySystemFill))
+                                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+
                             Divider()
 
-                            Text("Episode Dialogue Script (Tap any line you hear on Netflix to sync)")
+                            // Interactive Episode Script List
+                            Text("Episode Script (Tap any line you hear to sync)")
                                 .font(.caption.weight(.bold))
                                 .foregroundStyle(.secondary)
 
-                            TextField("Search spoken words in this episode (e.g. Ms. Choi)...", text: $scriptFilterText)
+                            TextField("Search words in this episode...", text: $scriptFilterText)
                                 .textFieldStyle(.roundedBorder)
                                 .font(.caption)
 
                             ScrollView {
                                 LazyVStack(alignment: .leading, spacing: 6) {
-                                    ForEach(filteredCues) { cue in
+                                    ForEach(scriptCues) { cue in
                                         let isCurrent = (syncEngine.activeCue?.id == cue.id)
                                         Button {
                                             syncEngine.jumpToCue(cue)
@@ -257,7 +273,7 @@ struct ContentView: View {
                                                     .foregroundStyle(isCurrent ? .yellow : .secondary)
                                                     .frame(width: 44, alignment: .leading)
 
-                                                Text(cue.translatedText)
+                                                Text(cue.text)
                                                     .font(.caption.weight(isCurrent ? .bold : .regular))
                                                     .foregroundStyle(isCurrent ? .yellow : .primary)
                                                     .multilineTextAlignment(.leading)
@@ -279,14 +295,14 @@ struct ContentView: View {
                                     }
                                 }
                             }
-                            .frame(maxHeight: 210)
+                            .frame(maxHeight: 200)
                         }
                         .padding()
                         .background(Color(.secondarySystemGroupedBackground))
                         .clipShape(RoundedRectangle(cornerRadius: 16))
                     }
 
-                    // 4. Search Any Movie / Show on the Web
+                    // 4. Find Any Movie or TV Series Subtitles
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Label("Find Movie or Series Subtitles", systemImage: "magnifyingglass")
@@ -325,7 +341,7 @@ struct ContentView: View {
                                 } else {
                                     Image(systemName: "play.fill")
                                 }
-                                Text(openSubtitles.isSearching ? "Searching..." : (openSubtitles.isDownloading ? "Downloading Episode SRT..." : "Find & Play English Subtitles"))
+                                Text(openSubtitles.isSearching ? "Searching..." : (openSubtitles.isDownloading ? "Downloading Subtitle..." : "Find & Play English Subtitles"))
                                     .font(.subheadline.weight(.bold))
                             }
                             .frame(maxWidth: .infinity)
@@ -395,10 +411,10 @@ struct ContentView: View {
                 .padding(.bottom, 24)
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("SubFloat OTT v3.0")
+            .navigationTitle("SubFloat")
             .navigationBarTitleDisplayMode(.inline)
             .onAppear {
-                checkClipboardForNetflixTitle()
+                checkClipboard()
             }
             .fileImporter(
                 isPresented: $showingFileImporter,
@@ -409,7 +425,7 @@ struct ContentView: View {
                     let accessed = url.startAccessingSecurityScopedResource()
                     defer { if accessed { url.stopAccessingSecurityScopedResource() } }
                     if let content = try? String(contentsOf: url, encoding: .utf8) {
-                        syncEngine.importSRTFileContent(content, fileName: url.lastPathComponent, sourceLanguage: .korean)
+                        syncEngine.importSRTContent(content, title: url.deletingPathExtension().lastPathComponent)
                         syncEngine.play()
                         pipManager.startPiPIfNeeded()
                     }
@@ -430,31 +446,24 @@ struct ContentView: View {
         }
     }
 
-    private func selectResult(_ item: OpenSubtitleSearchResult) {
-        if let track = item.embeddedTrack {
-            syncEngine.loadTrack(track, startAtFirstDialogue: true)
-            syncEngine.play()
-            pipManager.startPiPIfNeeded()
-        } else if item.downloadUrl != nil {
-            downloadingItemId = item.id
-            Task {
-                defer { downloadingItemId = nil }
-                if let downloaded = await openSubtitles.downloadSRT(from: item) {
-                    let track = SubtitleTrack(
-                        id: UUID(),
-                        title: downloaded.title,
-                        sourceLanguage: .korean,
-                        cues: downloaded.cues
-                    )
-                    syncEngine.loadTrack(track, startAtFirstDialogue: true)
-                    syncEngine.play()
-                    pipManager.startPiPIfNeeded()
-                }
+    private func selectResult(_ item: SubtitleSearchResult) {
+        downloadingItemId = item.id
+        Task {
+            defer { downloadingItemId = nil }
+            if let downloaded = await openSubtitles.downloadSRT(from: item) {
+                let track = SubtitleTrack(
+                    id: UUID(),
+                    title: downloaded.title,
+                    cues: downloaded.cues
+                )
+                syncEngine.loadTrack(track, startAtFirstDialogue: true)
+                syncEngine.play()
+                pipManager.startPiPIfNeeded()
             }
         }
     }
 
-    private func checkClipboardForNetflixTitle() {
+    private func checkClipboard() {
         guard let clip = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
               !clip.isEmpty else { return }
 

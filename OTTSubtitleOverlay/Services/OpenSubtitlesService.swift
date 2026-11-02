@@ -1,26 +1,13 @@
 import Foundation
 import zlib
 
-struct OpenSubtitleSearchResult: Identifiable {
-    let id: String
-    let title: String
-    let releaseName: String
-    let language: String
-    let downloadCount: Int
-    let downloadUrl: String?
-    let season: Int?
-    let episode: Int?
-    let embeddedTrack: SubtitleTrack?
-}
-
 @MainActor
 final class OpenSubtitlesService: ObservableObject {
     static let shared = OpenSubtitlesService()
 
-    @Published var apiKey: String = ""
     @Published var isSearching: Bool = false
     @Published var isDownloading: Bool = false
-    @Published var searchResults: [OpenSubtitleSearchResult] = []
+    @Published var searchResults: [SubtitleSearchResult] = []
     @Published var statusMessage: String = ""
     @Published var errorMessage: String?
 
@@ -28,13 +15,12 @@ final class OpenSubtitlesService: ObservableObject {
         self.searchResults = []
     }
 
-    struct DownloadedSRT {
+    struct DownloadedSubtitle {
         let title: String
-        let languageCode: String
         let cues: [SubtitleCue]
     }
 
-    /// Parses inline episode/season markers like "Teach you a lesson ep 6" or "s01e06"
+    /// Extracts season/episode from queries like "Show ep 6", "Show s01e06", "Show 1x06"
     static func extractQuerySeasonEpisode(rawQuery: String, rawSeason: String, rawEpisode: String) -> (cleanQuery: String, season: Int?, episode: Int?) {
         var q = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         var s = Int(rawSeason.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -55,7 +41,7 @@ final class OpenSubtitlesService: ObservableObject {
             }
         }
 
-        // Match "ep 6", "ep. 6", "episode 6", "e6"
+        // Match "ep 6", "ep. 6", "episode 6"
         if let regex = try? NSRegularExpression(pattern: "(?i)\\b(?:episode|ep\\.?|e)\\s*(\\d{1,3})\\b"),
            let match = regex.firstMatch(in: q, range: NSRange(q.startIndex..., in: q)),
            let epRange = Range(match.range(at: 1), in: q) {
@@ -69,7 +55,7 @@ final class OpenSubtitlesService: ObservableObject {
         return (q.isEmpty ? rawQuery.trimmingCharacters(in: .whitespacesAndNewlines) : q, s, e)
     }
 
-    /// Searches public subtitle mirrors on the web for any movie or TV series title.
+    /// Searches OpenSubtitles for English subtitles matching any movie or series.
     func searchSubtitles(query: String, season: String = "", episode: String = "") async {
         let parsed = Self.extractQuerySeasonEpisode(rawQuery: query, rawSeason: season, rawEpisode: episode)
         guard !parsed.cleanQuery.isEmpty else {
@@ -81,21 +67,21 @@ final class OpenSubtitlesService: ObservableObject {
         isSearching = true
         errorMessage = nil
         if let ep = parsed.episode {
-            statusMessage = "Searching English subtitles for \"\(parsed.cleanQuery)\" Episode \(ep)..."
+            statusMessage = "Searching English subtitles for \"\(parsed.cleanQuery)\" Ep \(ep)..."
         } else {
             statusMessage = "Searching English subtitles for \"\(parsed.cleanQuery)\"..."
         }
         defer { isSearching = false }
 
-        var remoteMatches = await fetchRemoteSearchResults(
+        var remoteMatches = await fetchRemote(
             query: parsed.cleanQuery,
             season: parsed.season,
             episode: parsed.episode
         )
 
-        // Fallback: if filtering by season/episode returned nothing, fetch all episodes for the show and sort Episode match to top
+        // Fallback: If filtering by season/episode returned 0 results, search all episodes of the series
         if remoteMatches.isEmpty && (parsed.season != nil || parsed.episode != nil) {
-            remoteMatches = await fetchRemoteSearchResults(
+            remoteMatches = await fetchRemote(
                 query: parsed.cleanQuery,
                 season: nil,
                 episode: nil
@@ -111,23 +97,22 @@ final class OpenSubtitlesService: ObservableObject {
         if !remoteMatches.isEmpty {
             self.searchResults = remoteMatches
             if let ep = parsed.episode {
-                self.statusMessage = "Found \(remoteMatches.count) English subtitle release(s) for Episode \(ep). Tap any release or watch it play automatically."
+                self.statusMessage = "Found \(remoteMatches.count) English release(s) for Ep \(ep). Tap to play."
             } else {
-                self.statusMessage = "Found \(remoteMatches.count) English subtitle releases. Tap your episode below to start."
+                self.statusMessage = "Found \(remoteMatches.count) English subtitle releases. Tap your episode to play."
             }
         } else {
             self.searchResults = []
-            self.statusMessage = "No subtitles found for \"\(parsed.cleanQuery)\". Please check the spelling."
+            self.statusMessage = "No subtitles found for \"\(parsed.cleanQuery)\". Check title spelling."
         }
     }
 
-    private func fetchRemoteSearchResults(query: String, season: Int?, episode: Int?) async -> [OpenSubtitleSearchResult] {
+    private func fetchRemote(query: String, season: Int?, episode: Int?) async -> [SubtitleSearchResult] {
         var allowed = CharacterSet.alphanumerics
         allowed.insert(charactersIn: "-._~")
         let cleanQuery = query.lowercased().addingPercentEncoding(withAllowedCharacters: allowed) ?? query
 
-        // IMPORTANT: rest.opensubtitles.org requires path segments after /search/ to be sorted alphabetically
-        // to avoid a 302 redirect.
+        // Path segments must be alphabetical to avoid 302 redirects
         var segments: [String] = [
             "query-\(cleanQuery)",
             "sublanguageid-eng"
@@ -143,7 +128,7 @@ final class OpenSubtitlesService: ObservableObject {
 
         guard let url = URL(string: "https://rest.opensubtitles.org/search/\(path)") else { return [] }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 15
+        request.timeoutInterval = 12
         request.setValue("TemporaryUserAgent", forHTTPHeaderField: "User-Agent")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
@@ -154,7 +139,7 @@ final class OpenSubtitlesService: ObservableObject {
                 return []
             }
 
-            var results: [OpenSubtitleSearchResult] = []
+            var results: [SubtitleSearchResult] = []
             for item in jsonArray {
                 let id = (item["IDSubtitleFile"] as? String) ?? UUID().uuidString
                 let rawMovieName = (item["MovieName"] as? String) ?? query
@@ -171,16 +156,15 @@ final class OpenSubtitlesService: ObservableObject {
 
                 let displayTitle: String
                 if let s = sNum, let e = eNum, (s > 0 || e > 0) {
-                    let epBadge = String(format: "S%02dE%02d (Ep %d)", max(1, s), e, e)
-                    displayTitle = "\(epBadge) • \(movieName)"
+                    displayTitle = String(format: "S%02dE%02d (Ep %d) • %@", max(1, s), e, e, movieName)
                 } else if let e = eNum, e > 0 {
-                    displayTitle = "Episode \(e) • \(movieName)"
+                    displayTitle = "Ep \(e) • \(movieName)"
                 } else {
                     displayTitle = movieName
                 }
 
                 results.append(
-                    OpenSubtitleSearchResult(
+                    SubtitleSearchResult(
                         id: id,
                         title: displayTitle,
                         releaseName: release,
@@ -188,13 +172,11 @@ final class OpenSubtitlesService: ObservableObject {
                         downloadCount: dlCount,
                         downloadUrl: dlLink,
                         season: sNum,
-                        episode: eNum,
-                        embeddedTrack: nil
+                        episode: eNum
                     )
                 )
             }
 
-            // Sort by Season -> Episode -> Download Count descending
             results.sort { a, b in
                 if let targetEp = episode {
                     let aMatch = (a.episode == targetEp)
@@ -216,59 +198,63 @@ final class OpenSubtitlesService: ObservableObject {
         }
     }
 
-    /// Downloads and parses the real .srt file from a search result item.
-    func downloadSRT(from result: OpenSubtitleSearchResult) async -> DownloadedSRT? {
-        guard var dlUrlString = result.downloadUrl else { return nil }
-        if dlUrlString.hasPrefix("http://") {
-            dlUrlString = dlUrlString.replacingOccurrences(of: "http://", with: "https://")
-        }
-        guard let url = URL(string: dlUrlString) else { return nil }
+    /// Downloads and parses English .srt subtitle file.
+    func downloadSRT(from result: SubtitleSearchResult) async -> DownloadedSubtitle? {
+        guard let dlUrlString = result.downloadUrl else { return nil }
 
         isDownloading = true
-        statusMessage = "Downloading \(result.title)..."
+        statusMessage = "Downloading subtitles for \(result.title)..."
         defer { isDownloading = false }
 
+        // Attempt 1: Direct uncompressed .srt URL
+        let plainSrtUrl = dlUrlString
+            .replacingOccurrences(of: "http://", with: "https://")
+            .replacingOccurrences(of: "/filead/", with: "/file/")
+            .replacingOccurrences(of: ".gz", with: ".srt")
+
+        if let srt = await fetchAndParseSRT(urlString: plainSrtUrl) {
+            statusMessage = "Loaded \(srt.count) English lines for \(result.title)!"
+            return DownloadedSubtitle(title: result.title, cues: srt)
+        }
+
+        // Attempt 2: Fallback to .gz and decompress
+        let gzUrl = dlUrlString.replacingOccurrences(of: "http://", with: "https://")
+        if let srt = await fetchAndParseSRT(urlString: gzUrl, decompressGzip: true) {
+            statusMessage = "Loaded \(srt.count) English lines for \(result.title)!"
+            return DownloadedSubtitle(title: result.title, cues: srt)
+        }
+
+        statusMessage = "Could not download or decode subtitle."
+        return nil
+    }
+
+    private func fetchAndParseSRT(urlString: String, decompressGzip: Bool = false) async -> [SubtitleCue]? {
+        guard let url = URL(string: urlString) else { return nil }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 15
+        request.timeoutInterval = 12
         request.setValue("TemporaryUserAgent", forHTTPHeaderField: "User-Agent")
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-                statusMessage = "Download failed (HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0))."
                 return nil
             }
 
-            // Decompress Gzip if needed
-            let srtData = data.gunzipped() ?? data
-            let srtText = String(data: srtData, encoding: .utf8)
-                ?? String(decoding: srtData, as: UTF8.self)
-
-            let cues = SRTParser.parse(content: srtText)
-            guard !cues.isEmpty else {
-                statusMessage = "No dialogue cues found in file."
-                return nil
+            var text: String?
+            if decompressGzip {
+                if let unzipped = data.gunzipped() {
+                    text = String(data: unzipped, encoding: .utf8) ?? String(decoding: unzipped, as: UTF8.self)
+                }
+            } else {
+                text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
             }
 
-            statusMessage = "Playing \(cues.count) real English lines for \(result.title)!"
-            return DownloadedSRT(title: result.title, languageCode: "en", cues: cues)
+            guard let text, !text.isEmpty else { return nil }
+            let cues = SRTParser.parse(content: text)
+            return cues.isEmpty ? nil : cues
         } catch {
-            statusMessage = "Download error: \(error.localizedDescription)"
             return nil
         }
-    }
-
-    /// Automatically scours the web for the given show, downloads the top English SRT release, and returns the track.
-    func autoScourAndDownload(query: String, season: String = "", episode: String = "") async -> DownloadedSRT? {
-        await searchSubtitles(query: query, season: season, episode: episode)
-        for candidate in searchResults {
-            if candidate.downloadUrl != nil {
-                if let downloaded = await downloadSRT(from: candidate) {
-                    return downloaded
-                }
-            }
-        }
-        return nil
     }
 }
 

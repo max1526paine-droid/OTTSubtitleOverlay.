@@ -1,9 +1,9 @@
 import Foundation
 
-/// Parses standard `.srt` (SubRip) and `.vtt` (WebVTT) subtitle files into `SubtitleCue` arrays,
-/// automatically removing OpenSubtitles promotional ads and watermarks.
+/// Fast, clean parser for .srt (SubRip) and .vtt (WebVTT) subtitle files.
+/// Automatically cleans promotional ads and watermarks.
 enum SRTParser {
-    private static let spamPatterns: [String] = [
+    private static let adKeywords: [String] = [
         "opensubtitles",
         "osdb.link",
         "advertise your product",
@@ -33,7 +33,6 @@ enum SRTParser {
 
             guard !lines.isEmpty else { continue }
 
-            // Find the timestamp line containing "-->"
             guard let timingLineIndex = lines.firstIndex(where: { $0.contains("-->") }) else {
                 continue
             }
@@ -56,7 +55,7 @@ enum SRTParser {
             guard !cleanedText.isEmpty else { continue }
 
             let lower = cleanedText.lowercased()
-            if spamPatterns.contains(where: { lower.contains($0) }) {
+            if adKeywords.contains(where: { lower.contains($0) }) {
                 continue
             }
 
@@ -64,8 +63,7 @@ enum SRTParser {
                 index: autoIndex,
                 startTime: startTime,
                 endTime: endTime,
-                originalText: nil,
-                translatedText: cleanedText
+                text: cleanedText
             )
             cues.append(cue)
             autoIndex += 1
@@ -74,16 +72,15 @@ enum SRTParser {
         return cues
     }
 
-    /// Finds the index of the first continuous spoken dialogue line (skipping isolated opening title cards
-    /// that are followed by a long >15s silent intro gap).
+    /// Finds index of the first dialogue line, skipping isolated intro title cards if followed by a long silent gap (>15s).
     static func firstSpokenDialogueIndex(in cues: [SubtitleCue]) -> Int {
         guard cues.count > 1 else { return 0 }
         for i in 0..<min(5, cues.count - 1) {
             let current = cues[i]
             let next = cues[i + 1]
             let gap = next.startTime - current.endTime
-            let isAllCapsTitleCard = (current.translatedText == current.translatedText.uppercased()) && current.translatedText.count > 3
-            if gap <= 15.0 && !isAllCapsTitleCard {
+            let isAllCaps = (current.text == current.text.uppercased()) && current.text.count > 3
+            if gap <= 15.0 && !isAllCaps {
                 return i
             }
         }
